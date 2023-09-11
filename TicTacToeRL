@@ -1,0 +1,226 @@
+import tkinter as tk
+from tkinter import messagebox
+import numpy as np
+import pickle
+
+# Constants
+PLAYER_X = 1  # Representing X as 1
+PLAYER_O = -1  # Representing O as -1
+ALPHA = 0.1  # Learning rate
+GAMMA = 0.9  # Discount factor
+EMPTY = 0  # Empty cell on the board
+
+# Hyperparameters
+EPSILON_START = 1.0
+EPSILON_END = 0.1
+EPSILON_DECAY = 0.995
+
+current_epsilon = EPSILON_START
+current_epsilon = EPSILON_START
+
+# Create the Q-table
+Q_table = np.zeros((3 ** 9, 9))
+
+
+def board_to_int(board):
+    return sum([board[i] * (3 ** i) for i in range(9)])
+
+
+def choose_action(state, valid_actions):
+    if np.random.uniform(0, 1) < current_epsilon:
+        return np.random.choice(valid_actions)
+    else:
+        q_values = [Q_table[state, a] for a in valid_actions]
+        return valid_actions[np.argmax(q_values)]
+
+
+def check_end(board):
+    for i in range(3):
+        if sum(board[i * 3:i * 3 + 3]) == 3 or sum(board[i::3]) == 3: return PLAYER_X
+        if sum(board[i * 3:i * 3 + 3]) == -3 or sum(board[i::3]) == -3: return PLAYER_O
+    if board[0] + board[4] + board[8] == 3 or board[2] + board[4] + board[6] == 3: return PLAYER_X
+    if board[0] + board[4] + board[8] == -3 or board[2] + board[4] + board[6] == -3: return PLAYER_O
+    return EMPTY if EMPTY in board else 'Draw'
+
+def save_q_table():
+    data_to_save = {
+        "Q_table": Q_table,
+        "current_epsilon": current_epsilon
+    }
+    with open('q_table.pkl', 'wb') as f:
+        pickle.dump(data_to_save, f)
+
+def load_q_table():
+    global current_epsilon
+    try:
+        with open('q_table.pkl', 'rb') as f:
+            data_loaded = pickle.load(f)
+            current_epsilon = data_loaded["current_epsilon"]
+            return data_loaded["Q_table"]
+    except FileNotFoundError:
+        current_epsilon = EPSILON_START
+        return np.zeros((3 ** 9, 9))  # Default Q-table if no saved table is found
+
+Q_table = load_q_table()
+
+class TicTacToeGUI:
+    def __init__(self, master):
+        self.master = master
+        self.master.title("Tic Tac Toe with RL")
+
+        self.buttons = [
+            tk.Button(master, text=' ', font='Arial 20', width=5, height=2, command=lambda i=i: self.make_move(i))
+            for i in range(9)]
+        for i, btn in enumerate(self.buttons):
+            row = i // 3
+            col = i % 3
+            btn.grid(row=row, column=col)
+
+        self.train_btn = tk.Button(master, text='Train Agent', command=self.train_agent)
+        self.train_btn.grid(row=3, column=0, columnspan=3)
+
+        self.play_btn = tk.Button(master, text='Play Against Agent', command=self.play_against_agent)
+        self.play_btn.grid(row=4, column=0, columnspan=3)
+
+        self.reset_board()
+
+    def update_gui(self):
+        for i, value in enumerate(self.board):
+            if value == PLAYER_X:
+                self.buttons[i]["text"] = 'X'
+            elif value == PLAYER_O:
+                self.buttons[i]["text"] = 'O'
+            else:
+                self.buttons[i]["text"] = ' '
+        self.master.update_idletasks()
+        self.master.update()
+
+    def reset_board(self):
+        self.board = [EMPTY] * 9
+        for btn in self.buttons:
+            btn["text"] = ' '
+            btn["state"] = tk.NORMAL
+
+    def make_move(self, pos):
+        # Save the current state for Q-learning updates
+        previous_state = board_to_int(self.board)
+
+        # Player's move
+        self.board[pos] = PLAYER_X
+        self.buttons[pos]["text"] = 'X'
+        self.buttons[pos]["state"] = tk.DISABLED
+
+        result = check_end(self.board)
+        if result != EMPTY:
+            reward = 1 if result == PLAYER_X else 0.5 if result == 'Draw' else -1
+            # If the game is over after the player's move, update the Q-table for the previous state and action
+            Q_table[previous_state, pos] += ALPHA * (reward - Q_table[previous_state, pos])
+            self.game_over(result)
+            return
+
+        # Save the agent's current state for Q-learning updates
+        state_before_ai_move = board_to_int(self.board)
+
+        state = board_to_int(self.board)
+        valid_actions = [i for i, e in enumerate(self.board) if e == EMPTY]
+        action = choose_action(state, valid_actions)
+        self.board[action] = PLAYER_O
+        self.buttons[action]["text"] = 'O'
+        self.buttons[action]["state"] = tk.DISABLED
+
+        result = check_end(self.board)
+        if result != EMPTY:
+            reward = -1 if result == PLAYER_O else 0.5 if result == 'Draw' else 1
+            # Update the Q-table for the agent's move
+            Q_table[state_before_ai_move, action] += ALPHA * (reward - Q_table[state_before_ai_move, action])
+            self.game_over(result)
+
+    def game_over(self, result):
+        if result == 'Draw':
+            messagebox.showinfo("Game Over", "It's a Draw!")
+            self.master.title("Tic Tac Toe with RL - It's a Draw!")
+        elif result == PLAYER_X:
+            messagebox.showinfo("Game Over", "You Win!")
+            self.master.title("Tic Tac Toe with RL - You Win!")
+        elif result == PLAYER_O:
+            messagebox.showinfo("Game Over", "AI Wins!")
+            self.master.title("Tic Tac Toe with RL - AI Wins!")
+        self.reset_board()
+
+    def train_agent(self):
+        self.master.title("Tic Tac Toe with RL - Training...")
+        global current_epsilon
+
+        NUM_EPISODES = 20000  # Increased training episodes
+        for episode in range(NUM_EPISODES):
+            self.board = [EMPTY] * 9
+            player = PLAYER_X if np.random.choice([True, False]) else PLAYER_O
+
+            while True:
+                state = board_to_int(self.board)
+                valid_actions = [i for i, e in enumerate(self.board) if e == EMPTY]
+                action = choose_action(state, valid_actions)
+                self.board[action] = player
+                if (episode + 1) % 500 == 0:  # Show every 500th game for demonstration
+                    self.update_gui()
+                    self.master.after(100)  # Pause for 100ms to show the moves
+
+                end_game = check_end(self.board)
+
+                # Adding logic for symmetries to enhance learning
+                symmetries = [
+                    [0, 1, 2, 3, 4, 5, 6, 7, 8],  # Original
+                    [2, 1, 0, 5, 4, 3, 8, 7, 6],  # Horizontal flipS
+                    [6, 7, 8, 3, 4, 5, 0, 1, 2],  # Vertical flip
+                    [8, 7, 6, 5, 4, 3, 2, 1, 0],  # 180-degree rotation
+                    [2, 5, 8, 1, 4, 7, 0, 3, 6],  # 90-degree rotation
+                    [6, 3, 0, 7, 4, 1, 8, 5, 2],  # 270-degree rotation
+                    [0, 3, 6, 1, 4, 7, 2, 5, 8],  # Diagonal flip 1
+                    [2, 5, 8, 3, 4, 7, 0, 1, 6]  # Diagonal flip 2
+                ]
+
+                for sym in symmetries:
+                    sym_state = board_to_int([self.board[i] for i in sym])
+                    sym_action = sym[action]
+
+                    if end_game:
+                        if end_game == PLAYER_X:
+                            reward = 1
+                        elif end_game == PLAYER_O:
+                            reward = -1
+                        elif end_game == 'Draw':
+                            reward = 0.5
+                        Q_table[sym_state, sym_action] += ALPHA * (reward - Q_table[sym_state, sym_action])
+                    else:
+                        reward = 0
+                        next_state = board_to_int(self.board)
+                        max_future_q = np.max([Q_table[next_state, a] for a in valid_actions if a != action])
+                        new_q = (1 - ALPHA) * Q_table[sym_state, sym_action] + ALPHA * (reward + GAMMA * max_future_q)
+                        Q_table[sym_state, sym_action] = new_q
+
+                if end_game:
+                    break
+
+                player = PLAYER_O if player == PLAYER_X else PLAYER_X
+
+            # Decay epsilon
+            current_epsilon = max(EPSILON_END, current_epsilon * EPSILON_DECAY)
+
+            if (episode + 1) % 100 == 0:
+                self.master.update()
+                print(f"Training... Episode: {episode + 1}/{NUM_EPISODES}")
+
+        print("Training complete!")
+        save_q_table()  # Save Q-table after training
+        messagebox.showinfo("Training", "Training complete!")
+        self.master.title("Tic Tac Toe with RL")
+
+
+    def play_against_agent(self):
+        self.reset_board()
+
+
+if __name__ == '__main__':
+    root = tk.Tk()
+    game = TicTacToeGUI(root)
+    root.mainloop()
